@@ -1,9 +1,14 @@
 package eu.kanade.tachiyomi.animeextension.en.allanime
 
 import android.content.SharedPreferences
+import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.gogostreamextractor.GogoStreamExtractor
@@ -301,8 +306,24 @@ class AllAnime :
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
         val response = client.newCall(videoListRequest(episode)).await()
+        val responseBody = response.body.string()
 
-        val videoJson = response.parseAs<EpisodeResult>()
+        // 1. Try parsing the encrypted wrapper
+        val encryptedJson = runCatching {
+            json.decodeFromString<EncryptedEpisodeResult>(responseBody)
+        }.getOrNull()
+
+        // 2. Determine the source URLs list by decrypting if necessary
+        val sourceUrls = if (encryptedJson?.data?.tobeparsed != null) {
+            val decryptedString = decryptTobeparsed(encryptedJson.data.tobeparsed)
+            val decryptedJson = json.decodeFromString<DecryptedEpisodeResult>(decryptedString)
+            decryptedJson.episode.sourceUrls
+        } else {
+            // Fallback to old plain-text parsing
+            val videoJson = json.decodeFromString<EpisodeResult>(responseBody)
+            videoJson.data.episode.sourceUrls
+        }
+
         val videoList = mutableListOf<Pair<Video, Float>>()
         val serverList = mutableListOf<Server>()
 
@@ -320,7 +341,7 @@ class AllAnime :
             "streamwish" to listOf("wish"),
         )
 
-        videoJson.data.episode.sourceUrls.forEach { video ->
+        sourceUrls.forEach { video ->
             val videoUrl = video.sourceUrl.decryptSource()
 
             val matchingMapping = mappings.firstOrNull { (altHoster, urlMatches) ->
@@ -495,6 +516,30 @@ class AllAnime :
     }
 
     private fun String.containsAny(keywords: List<String>): Boolean = keywords.any { this.contains(it) }
+
+    private fun decryptTobeparsed(base64Payload: String): String {
+        // 1. Generate the SHA-256 key from the reversed secret string
+        val secret = "P7K2RGbFgauVtmiS".reversed()
+        val keyBytes = MessageDigest.getInstance("SHA-256").digest(secret.toByteArray())
+
+        // 2. Decode the Base64 payload
+        val decodedBytes = Base64.decode(base64Payload, Base64.DEFAULT)
+
+        // 3. Separate the IV (first 12 bytes) and the encrypted data
+        val iv = decodedBytes.sliceArray(0 until 12)
+        val encryptedData = decodedBytes.sliceArray(12 until decodedBytes.size)
+
+        // 4. Initialize the AES-GCM Cipher
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val keySpec = SecretKeySpec(keyBytes, "AES")
+        val gcmSpec = GCMParameterSpec(128, iv)
+
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+        // 5. Decrypt and convert back to a JSON String
+        val decryptedBytes = cipher.doFinal(encryptedData)
+        return String(decryptedBytes)
+    }
 
     companion object {
         private const val PAGE_SIZE = 26 // number of items to retrieve when calling API
