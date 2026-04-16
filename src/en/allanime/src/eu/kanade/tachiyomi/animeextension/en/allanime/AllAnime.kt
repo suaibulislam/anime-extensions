@@ -314,14 +314,17 @@ class AllAnime :
         }.getOrNull()
 
         // 2. Determine the source URLs list by decrypting if necessary
-        val sourceUrls = if (encryptedJson?.data?.tobeparsed != null) {
-            val decryptedString = decryptTobeparsed(encryptedJson.data.tobeparsed)
-            val decryptedJson = json.decodeFromString<DecryptedEpisodeResult>(decryptedString)
-            decryptedJson.episode.sourceUrls
+        val sourceUrls = if (!encryptedJson?.data?.tobeparsed.isNullOrBlank()) {
+            runCatching {
+                val decryptedString = decryptTobeparsed(encryptedJson!!.data.tobeparsed!!)
+                json.decodeFromString<DecryptedEpisodeResult>(decryptedString).episode.sourceUrls
+            }.getOrElse {
+                // Malformed encrypted payload — fall back to plain-text parsing
+                json.decodeFromString<EpisodeResult>(responseBody).data.episode.sourceUrls
+            }
         } else {
             // Fallback to old plain-text parsing
-            val videoJson = json.decodeFromString<EpisodeResult>(responseBody)
-            videoJson.data.episode.sourceUrls
+            json.decodeFromString<EpisodeResult>(responseBody).data.episode.sourceUrls
         }
 
         val videoList = mutableListOf<Pair<Video, Float>>()
@@ -519,26 +522,25 @@ class AllAnime :
 
     private fun decryptTobeparsed(base64Payload: String): String {
         // 1. Generate the SHA-256 key from the reversed secret string
-        val secret = "P7K2RGbFgauVtmiS".reversed()
-        val keyBytes = MessageDigest.getInstance("SHA-256").digest(secret.toByteArray())
+        val keyBytes = MessageDigest.getInstance(DECRYPT_KEY_ALGO)
+            .digest(DECRYPT_SECRET.reversed().toByteArray(Charsets.UTF_8))
 
         // 2. Decode the Base64 payload
         val decodedBytes = Base64.decode(base64Payload, Base64.DEFAULT)
 
-        // 3. Separate the IV (first 12 bytes) and the encrypted data
-        val iv = decodedBytes.sliceArray(0 until 12)
-        val encryptedData = decodedBytes.sliceArray(12 until decodedBytes.size)
+        // 3. Separate the IV and the encrypted data
+        val iv = decodedBytes.sliceArray(0 until DECRYPT_IV_LENGTH)
+        val encryptedData = decodedBytes.sliceArray(DECRYPT_IV_LENGTH until decodedBytes.size)
 
         // 4. Initialize the AES-GCM Cipher
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val keySpec = SecretKeySpec(keyBytes, "AES")
-        val gcmSpec = GCMParameterSpec(128, iv)
+        val cipher = Cipher.getInstance(DECRYPT_CIPHER_ALGO)
+        val keySpec = SecretKeySpec(keyBytes, DECRYPT_KEY_TYPE)
+        val gcmSpec = GCMParameterSpec(DECRYPT_TAG_LENGTH, iv)
 
         cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
 
         // 5. Decrypt and convert back to a JSON String
-        val decryptedBytes = cipher.doFinal(encryptedData)
-        return String(decryptedBytes)
+        return String(cipher.doFinal(encryptedData), Charsets.UTF_8)
     }
 
     companion object {
@@ -608,6 +610,13 @@ class AllAnime :
 
         private const val PREF_SUB_KEY = "preferred_sub"
         private const val PREF_SUB_DEFAULT = "sub"
+
+        private const val DECRYPT_SECRET = "P7K2RGbFgauVtmiS"
+        private const val DECRYPT_IV_LENGTH = 12
+        private const val DECRYPT_TAG_LENGTH = 128
+        private const val DECRYPT_KEY_ALGO = "SHA-256"
+        private const val DECRYPT_KEY_TYPE = "AES"
+        private const val DECRYPT_CIPHER_ALGO = "AES/GCM/NoPadding"
     }
 
     // ============================== Settings ==============================
