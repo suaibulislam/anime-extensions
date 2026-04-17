@@ -62,7 +62,6 @@ jobs:
         env:
           COMMIT_MESSAGE: ${{ steps.set-env.outputs.LATEST_COMMIT_MESSAGE }}
         run: |
-          latest_commit_author=$(git log -1 --pretty=%an)
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           chmod +x ./.github/scripts/bump-versions.py
@@ -109,18 +108,23 @@ jobs:
 
       - name: Prepare signing key
         run: |
-          echo ${{ secrets.SIGNING_KEY }} | base64 -d > signingkey.jks || echo "No signing key, generating debug key"
-          if [ ! -s signingkey.jks ]; then
-            keytool -genkey -v -keystore signingkey.jks -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
-          fi
+          keytool -genkey -v \
+            -keystore signingkey.jks \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android \
+            -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
           chmod 600 signingkey.jks
 
       - name: Build extensions (${{ matrix.chunk.number }})
         env:
           MODULES: ${{ join(matrix.chunk.modules, ' ') }}
-          ALIAS: ${{ secrets.ALIAS }}
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ALIAS: androiddebugkey
+          KEY_STORE_PASSWORD: android
+          KEY_PASSWORD: android
           MEGACLOUD_API: ${{ secrets.MEGACLOUD_API }}
           KISSKH_API: ${{ secrets.KISSKH_API }}
           KISSKH_SUB_API: ${{ secrets.KISSKH_SUB_API }}
