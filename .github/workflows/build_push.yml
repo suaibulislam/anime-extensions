@@ -78,7 +78,7 @@ jobs:
       - id: generate-matrices
         name: Create output matrices
         run: |
-          python ./.github/scripts/generate-build-matrices.py "$NX_BASE" Release :src:en:allanime:assembleRelease
+          python ./.github/scripts/generate-build-matrices.py "$NX_BASE" Release
 
   build:
     name: Build extensions (${{ matrix.chunk.number }})
